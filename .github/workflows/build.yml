@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'          # dispara ao criar tag: git tag v0.1.0 && git push --tags
+      - 'v*'          # dispara ao criar tag: git tag v0.2.0 && git push --tags
   workflow_dispatch:  # ou manualmente no GitHub
 
 jobs:
@@ -13,16 +13,12 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            targets: nsis,msi
-            args: ''
+            args: '--target x86_64-pc-windows-msvc'
           - platform: ubuntu-22.04
-            targets: appimage,deb
             args: ''
-          - platform: macos-latest      # Apple Silicon (M1/M2/M3)
-            targets: dmg
+          - platform: macos-latest
             args: '--target aarch64-apple-darwin'
-          - platform: macos-latest      # Intel
-            targets: dmg
+          - platform: macos-latest
             args: '--target x86_64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
@@ -39,7 +35,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -61,21 +57,28 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
+      - name: Build & Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'DSI Toolkit ${{ github.ref_name }}'
           releaseBody: |
-            ## Instalação
+            ## O que há de novo
+            Vê os commits para detalhes.
+
+            ## Instalação / Atualização
             - **Windows**: `DSI Toolkit_*_x64-setup.exe`
-            - **Linux (Ubuntu/Debian)**: `dsi-toolkit_*_amd64.deb`
+            - **Linux (Debian/Ubuntu)**: `dsi-toolkit_*_amd64.deb`
             - **Linux (outros)**: `dsi-toolkit_*_amd64.AppImage`
-            - **macOS Apple Silicon (M1/M2/M3)**: `DSI Toolkit_*_aarch64.dmg`
+            - **macOS Apple Silicon**: `DSI Toolkit_*_aarch64.dmg`
             - **macOS Intel**: `DSI Toolkit_*_x64.dmg`
+
+            > Se já tens a app instalada, ela vai atualizar automaticamente.
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: false
-          args: --target ${{ matrix.targets }}
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}

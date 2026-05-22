@@ -24,6 +24,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3MTkxQzQyRTM2QkRERjQKUldUMDNXdmpRaHdaMTQ2a2NOVXVUenpoUUxObUZKYXJEcXA2RGNEajRZWGpiVEd3UWZ3RGVacTYK",
+      "endpoints": [
+        "https://github.com/Dani176343/dsi-toolkit/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],

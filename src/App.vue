@@ -3,12 +3,14 @@ import { ref } from 'vue'
 import ReposView from './views/ReposView.vue'
 import JarsView from './views/JarsView.vue'
 import ConfigView from './views/ConfigView.vue'
+import UpdateBanner from './components/UpdateBanner.vue'
 
 type Tab = 'repos' | 'jars' | 'config'
 const activeTab = ref<Tab>('repos')
 </script>
 
 <template>
+  <UpdateBanner />
   <div class="app">
     <nav class="sidebar">
       <div class="brand">
