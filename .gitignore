@@ -1,0 +1,39 @@
+# ── Node ────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Vite / frontend build ────────────────────────────────────────────────────
+dist/
+dist-ssr/
+*.local
+
+# ── Tauri ───────────────────────────────────────────────────────────────────
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# ── Rust ────────────────────────────────────────────────────────────────────
+**/*.rs.bk
+*.pdb
+
+# ── Chaves de assinatura (NUNCA commitar) ────────────────────────────────────
+*.key
+*.key.pub
+.tauri-signing-key*
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
