@@ -35,9 +35,14 @@ async function install() {
   try {
     const update = await check()
     if (!update?.available) return
+    let totalSize = 0
+    let downloaded = 0
     await update.downloadAndInstall((event) => {
-      if (event.event === 'Progress' && event.data.chunkLength && event.data.contentLength) {
-        progress.value = Math.round((event.data.chunkLength / event.data.contentLength) * 100)
+      if (event.event === 'Started') {
+        totalSize = event.data.contentLength ?? 0
+      } else if (event.event === 'Progress') {
+        downloaded += event.data.chunkLength
+        if (totalSize > 0) progress.value = Math.round((downloaded / totalSize) * 100)
       }
     })
     state.value = 'done'
