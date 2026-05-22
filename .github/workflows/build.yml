@@ -3,8 +3,12 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'          # dispara ao criar tag: git tag v0.2.0 && git push --tags
-  workflow_dispatch:  # ou manualmente no GitHub
+      - 'v*'
+  workflow_dispatch:
+
+# Permissão para criar Releases e fazer upload de assets
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -13,13 +17,9 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: '--target x86_64-pc-windows-msvc'
           - platform: ubuntu-22.04
-            args: ''
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
+          - platform: macos-latest    # Apple Silicon (M1/M2/M3)
+          - platform: macos-13        # Intel
 
     runs-on: ${{ matrix.platform }}
 
@@ -34,8 +34,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -81,4 +79,3 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          args: ${{ matrix.args }}
