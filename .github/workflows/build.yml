@@ -18,8 +18,7 @@ jobs:
         include:
           - platform: windows-latest
           - platform: ubuntu-22.04
-          - platform: macos-latest    # Apple Silicon (M1/M2/M3)
-          - platform: macos-13        # Intel
+          - platform: macos-latest    # Apple Silicon (M1/M2/M3) — corre via Rosetta em Intel
 
     runs-on: ${{ matrix.platform }}
 
