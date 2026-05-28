@@ -46,15 +46,26 @@ fn file_mtime_secs(path: &Path) -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
-/// Extrai o nome do JAR de uma linha de output do installJars.sh.
-/// Suporta várias formas:
-///   "✔ Instalado ./NOME.jar como ..."
-///   "Installed ./NOME.jar"
-///   "[INFO] Installing ... NOME.jar"
+/// Lê o mtime do JAR que estava guardado no ficheiro de timestamp.
+/// O ficheiro contém o mtime do JAR no momento da instalação como string numérica.
+fn read_stored_mtime(ts_file: &Path) -> Option<u64> {
+    std::fs::read_to_string(ts_file)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+/// Guarda o mtime actual do JAR no ficheiro de timestamp.
+/// Desta forma a comparação é exacta: "foi o JAR modificado desde a última instalação?"
+fn write_jar_timestamp(ts_file: &Path, jar_path: &Path) {
+    let mtime = file_mtime_secs(jar_path).unwrap_or(0);
+    let _ = std::fs::write(ts_file, mtime.to_string());
+}
+
 fn parse_jar_name(line: &str) -> Option<String> {
     let line = line.trim();
 
-    // Formato principal: "Instalado ./<nome>.jar"
     if let Some(idx) = line.find("Instalado ./") {
         let rest = &line[idx + "Instalado ./".len()..];
         if let Some(end) = rest.find(".jar") {
@@ -62,7 +73,6 @@ fn parse_jar_name(line: &str) -> Option<String> {
         }
     }
 
-    // Formato alternativo inglês: "Installed ./<nome>.jar"
     if let Some(idx) = line.find("Installed ./") {
         let rest = &line[idx + "Installed ./".len()..];
         if let Some(end) = rest.find(".jar") {
@@ -70,7 +80,6 @@ fn parse_jar_name(line: &str) -> Option<String> {
         }
     }
 
-    // Formato Maven install:plugin: "[INFO] Installing /path/to/NOME.jar to ..."
     if line.contains("[INFO] Installing") && line.contains(".jar") {
         if let Some(start) = line.rfind('/').or_else(|| line.rfind('\\')) {
             let rest = &line[start + 1..];
@@ -106,11 +115,13 @@ fn resolve_bash(script_path: &str) -> (String, Vec<String>) {
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// Lista todos os .jar em `jars_dir` com estado de instalação.
+/// `install_timestamp` é o mtime do JAR na altura da última instalação
+/// (guardado como conteúdo do ficheiro de timestamp).
 #[tauri::command]
 pub fn list_jars(jars_dir: String) -> Result<Vec<JarInfo>, String> {
     let dir = Path::new(&jars_dir);
     if !dir.is_dir() {
-        return Err(format!("Diretório não encontrado: {}", jars_dir));
+        return Err(format!("Directório não encontrado: {}", jars_dir));
     }
 
     let ts_dir = timestamps_dir(dir);
@@ -125,7 +136,8 @@ pub fn list_jars(jars_dir: String) -> Result<Vec<JarInfo>, String> {
             let name = path.file_name()?.to_str()?.to_string();
             let meta = std::fs::metadata(&path).ok()?;
             Some(JarInfo {
-                install_timestamp: file_mtime_secs(&ts_dir.join(&name)),
+                // Lê o mtime do JAR guardado no ficheiro de timestamp
+                install_timestamp: read_stored_mtime(&ts_dir.join(&name)),
                 name,
                 path: path.to_string_lossy().to_string(),
                 size_bytes: meta.len(),
@@ -140,10 +152,6 @@ pub fn list_jars(jars_dir: String) -> Result<Vec<JarInfo>, String> {
 
 /// Executa installJars.sh em streaming.
 /// Se `incremental` for true, passa o flag `-t` ao script (só instala os mais recentes).
-/// - emite evento `install-progress` por cada JAR instalado
-/// - cria ficheiro de timestamp em .install_jars_timestamps/
-/// - emite `install-done` no final
-/// - retorna Err com mensagem se o script falhar
 #[tauri::command]
 pub async fn run_install_jars(
     app: AppHandle,
@@ -156,14 +164,11 @@ pub async fn run_install_jars(
         return Err(format!("Script não encontrado: {}", script_path));
     }
 
-    // Conta JARs para saber o total antecipadamente
     let total = std::fs::read_dir(&jars_dir)
         .map(|entries| {
             entries
                 .flatten()
-                .filter(|e| {
-                    e.path().extension().and_then(|x| x.to_str()) == Some("jar")
-                })
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("jar"))
                 .count()
         })
         .unwrap_or(0);
@@ -172,8 +177,6 @@ pub async fn run_install_jars(
     let _ = std::fs::create_dir_all(&ts_dir);
 
     let (program, mut args) = resolve_bash(&script_path);
-
-    // Passa -t ao script quando modo incremental
     if incremental {
         args.push("-t".to_string());
     }
@@ -188,10 +191,8 @@ pub async fn run_install_jars(
 
     let stdout = child.stdout.take().unwrap();
     let mut lines = BufReader::new(stdout).lines();
-
     let mut installed = 0;
 
-    // Lê stderr numa task separada
     let stderr = child.stderr.take().unwrap();
     let stderr_handle = tokio::spawn(async move {
         let mut buf = Vec::new();
@@ -205,10 +206,8 @@ pub async fn run_install_jars(
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(jar_name) = parse_jar_name(&line) {
             installed += 1;
-
-            // Cria/atualiza ficheiro de timestamp
-            let _ = std::fs::write(ts_dir.join(&jar_name), "");
-
+            let jar_path = Path::new(&jars_dir).join(&jar_name);
+            write_jar_timestamp(&ts_dir.join(&jar_name), &jar_path);
             app.emit(
                 "install-progress",
                 InstallProgressEvent {
@@ -222,30 +221,26 @@ pub async fn run_install_jars(
         }
     }
 
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| e.to_string())?;
-
+    let status = child.wait().await.map_err(|e| e.to_string())?;
     let stderr_lines = stderr_handle.await.unwrap_or_default();
 
     if status.success() {
-        // Garante que todos os JARs presentes têm timestamp actualizado —
-        // mesmo os que o parser não detectou no output (formatos diferentes, etc.)
+        // Após sucesso: percorre TODOS os JARs e actualiza o timestamp de qualquer
+        // um que ainda esteja desactualizado (parser pode ter perdido algumas linhas).
+        // Guarda o mtime actual do JAR — assim a comparação é sempre exacta.
         if let Ok(entries) = std::fs::read_dir(&jars_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|x| x.to_str()) == Some("jar") {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        let ts_file = ts_dir.join(name);
-                        // Só toca se o timestamp for mais antigo que o ficheiro
-                        // (i.e., estava desactualizado antes do install)
-                        let jar_mtime = file_mtime_secs(&path).unwrap_or(0);
-                        let ts_mtime  = file_mtime_secs(&ts_file).unwrap_or(0);
-                        if jar_mtime > ts_mtime {
-                            let _ = std::fs::write(&ts_file, "");
-                            installed += 1;
-                        }
+                if path.extension().and_then(|x| x.to_str()) != Some("jar") {
+                    continue;
+                }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    let ts_file = ts_dir.join(name);
+                    let jar_mtime = file_mtime_secs(&path).unwrap_or(0);
+                    let stored   = read_stored_mtime(&ts_file).unwrap_or(0);
+                    if jar_mtime != stored {
+                        write_jar_timestamp(&ts_file, &path);
+                        installed += 1;
                     }
                 }
             }
@@ -253,11 +248,7 @@ pub async fn run_install_jars(
 
         app.emit(
             "install-done",
-            InstallDoneEvent {
-                repo: repo_name,
-                installed,
-                total,
-            },
+            InstallDoneEvent { repo: repo_name, installed, total },
         )
         .ok();
         Ok(installed)
@@ -270,11 +261,7 @@ pub async fn run_install_jars(
                 .filter(|l| l.contains("ERROR") || l.contains("FAILURE") || l.contains("Exception"))
                 .cloned()
                 .collect();
-            if filtered.is_empty() {
-                stderr_lines.join("\n")
-            } else {
-                filtered.join("\n")
-            }
+            if filtered.is_empty() { stderr_lines.join("\n") } else { filtered.join("\n") }
         };
         Err(msg)
     }
