@@ -47,13 +47,40 @@ fn file_mtime_secs(path: &Path) -> Option<u64> {
 }
 
 /// Extrai o nome do JAR de uma linha de output do installJars.sh.
-/// Suporta: "✔ Instalado ./NOME.jar como ..."
+/// Suporta várias formas:
+///   "✔ Instalado ./NOME.jar como ..."
+///   "Installed ./NOME.jar"
+///   "[INFO] Installing ... NOME.jar"
 fn parse_jar_name(line: &str) -> Option<String> {
     let line = line.trim();
-    let idx = line.find("Instalado ./")?;
-    let rest = &line[idx + "Instalado ./".len()..];
-    let end = rest.find(".jar")?;
-    Some(format!("{}.jar", &rest[..end]))
+
+    // Formato principal: "Instalado ./<nome>.jar"
+    if let Some(idx) = line.find("Instalado ./") {
+        let rest = &line[idx + "Instalado ./".len()..];
+        if let Some(end) = rest.find(".jar") {
+            return Some(format!("{}.jar", &rest[..end]));
+        }
+    }
+
+    // Formato alternativo inglês: "Installed ./<nome>.jar"
+    if let Some(idx) = line.find("Installed ./") {
+        let rest = &line[idx + "Installed ./".len()..];
+        if let Some(end) = rest.find(".jar") {
+            return Some(format!("{}.jar", &rest[..end]));
+        }
+    }
+
+    // Formato Maven install:plugin: "[INFO] Installing /path/to/NOME.jar to ..."
+    if line.contains("[INFO] Installing") && line.contains(".jar") {
+        if let Some(start) = line.rfind('/').or_else(|| line.rfind('\\')) {
+            let rest = &line[start + 1..];
+            if let Some(end) = rest.find(".jar") {
+                return Some(format!("{}.jar", &rest[..end]));
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(target_os = "windows")]
@@ -111,7 +138,8 @@ pub fn list_jars(jars_dir: String) -> Result<Vec<JarInfo>, String> {
     Ok(jars)
 }
 
-/// Executa installJars.sh em streaming:
+/// Executa installJars.sh em streaming.
+/// Se `incremental` for true, passa o flag `-t` ao script (só instala os mais recentes).
 /// - emite evento `install-progress` por cada JAR instalado
 /// - cria ficheiro de timestamp em .install_jars_timestamps/
 /// - emite `install-done` no final
@@ -122,6 +150,7 @@ pub async fn run_install_jars(
     repo_name: String,
     jars_dir: String,
     script_path: String,
+    incremental: bool,
 ) -> Result<usize, String> {
     if !Path::new(&script_path).is_file() {
         return Err(format!("Script não encontrado: {}", script_path));
@@ -142,7 +171,12 @@ pub async fn run_install_jars(
     let ts_dir = timestamps_dir(Path::new(&jars_dir));
     let _ = std::fs::create_dir_all(&ts_dir);
 
-    let (program, args) = resolve_bash(&script_path);
+    let (program, mut args) = resolve_bash(&script_path);
+
+    // Passa -t ao script quando modo incremental
+    if incremental {
+        args.push("-t".to_string());
+    }
 
     let mut child = tokio::process::Command::new(&program)
         .args(&args)
@@ -156,7 +190,6 @@ pub async fn run_install_jars(
     let mut lines = BufReader::new(stdout).lines();
 
     let mut installed = 0;
-    let mut stderr_lines: Vec<String> = vec![];
 
     // Lê stderr numa task separada
     let stderr = child.stderr.take().unwrap();
@@ -194,7 +227,7 @@ pub async fn run_install_jars(
         .await
         .map_err(|e| e.to_string())?;
 
-    stderr_lines = stderr_handle.await.unwrap_or_default();
+    let stderr_lines = stderr_handle.await.unwrap_or_default();
 
     if status.success() {
         app.emit(
@@ -211,12 +244,16 @@ pub async fn run_install_jars(
         let msg = if stderr_lines.is_empty() {
             format!("Script terminou com código {}", status.code().unwrap_or(-1))
         } else {
-            stderr_lines
+            let filtered: Vec<_> = stderr_lines
                 .iter()
                 .filter(|l| l.contains("ERROR") || l.contains("FAILURE") || l.contains("Exception"))
                 .cloned()
-                .collect::<Vec<_>>()
-                .join("\n")
+                .collect();
+            if filtered.is_empty() {
+                stderr_lines.join("\n")
+            } else {
+                filtered.join("\n")
+            }
         };
         Err(msg)
     }

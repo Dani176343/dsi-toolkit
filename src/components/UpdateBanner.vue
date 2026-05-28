@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 
@@ -8,10 +8,18 @@ const newVersion = ref('')
 const progress = ref(0)
 const errorMsg = ref('')
 
+let checkInterval: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
   // Aguarda 3s para não atrasar o arranque
   await new Promise(r => setTimeout(r, 3000))
   await checkUpdate()
+  // Verifica novamente a cada hora
+  checkInterval = setInterval(checkUpdate, 60 * 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (checkInterval) clearInterval(checkInterval)
 })
 
 async function checkUpdate() {

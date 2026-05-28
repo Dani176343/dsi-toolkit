@@ -15,6 +15,7 @@ interface InstallState {
   installed: number
   total: number
   lastJar: string
+  incremental: boolean
   result: null | { ok: boolean; count: number; error?: string }
 }
 const installState = ref<Record<string, InstallState>>({})
@@ -92,14 +93,20 @@ async function loadJarsFor(repo: RepoConfig) {
 async function runInstall(repo: RepoConfig) {
   if (!repo.jars_dir || !repo.install_script) return
 
+  const summary = repoSummary(repo.name)
+  const needsUpdate = summary.outdated + summary.missing
+  // Usa -t (incremental) se menos de 50% precisam de ser instalados
+  const incremental = needsUpdate > 0 && needsUpdate < summary.total * 0.5
+
   const total = jarsMap.value[repo.name]?.length ?? 0
-  installState.value[repo.name] = { running: true, installed: 0, total, lastJar: '', result: null }
+  installState.value[repo.name] = { running: true, installed: 0, total, lastJar: '', result: null, incremental }
 
   try {
     const count = await invoke<number>('run_install_jars', {
       repoName: repo.name,
       jarsDir: repo.jars_dir,
       scriptPath: repo.install_script,
+      incremental,
     })
     // install-done event will update state — fallback if somehow missed
     if (installState.value[repo.name]?.running) {
@@ -208,7 +215,10 @@ function repoSummary(repoName: string) {
             <div class="progress-fill" :style="{ width: progressPct(installState[repo.name]) + '%' }"></div>
           </div>
           <div class="progress-meta">
-            <span class="progress-jar">{{ installState[repo.name].lastJar || '…' }}</span>
+            <span class="progress-jar">
+              <span v-if="installState[repo.name].incremental" class="badge-incremental">⚡ modo rápido</span>
+              {{ installState[repo.name].lastJar || '…' }}
+            </span>
             <span class="progress-count">{{ installState[repo.name].installed }} / {{ installState[repo.name].total }}</span>
           </div>
         </div>
@@ -287,7 +297,8 @@ function repoSummary(repoName: string) {
 .progress-track { height: 4px; background: #222; border-radius: 2px; overflow: hidden; margin-bottom: .4rem; }
 .progress-fill { height: 100%; background: #2a6bd4; border-radius: 2px; transition: width .3s ease; }
 .progress-meta { display: flex; justify-content: space-between; font-size: .72rem; color: #555; }
-.progress-jar { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; font-family: 'Consolas', monospace; }
+.progress-jar { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; font-family: 'Consolas', monospace; display: flex; align-items: center; gap: .4rem; }
+.badge-incremental { background: #1a1000; color: #c09020; border: 1px solid #3d2800; border-radius: 4px; padding: .1em .4em; font-size: .7rem; font-family: sans-serif; flex-shrink: 0; }
 .progress-count { flex-shrink: 0; }
 
 /* result */
