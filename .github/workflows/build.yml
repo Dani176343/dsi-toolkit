@@ -130,10 +130,17 @@ jobs:
               const archive = assets.find(a => a.name === archiveName)
               if (!archive) continue
 
-              // Descarrega a assinatura
-              const resp = await fetch(asset.browser_download_url)
-              const signature = (await resp.text()).trim()
-              const url = archive.browser_download_url
+              // Descarrega a assinatura via API autenticada (funciona mesmo em rascunho)
+              const sigResp = await github.rest.repos.getReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: asset.id,
+                headers: { accept: 'application/octet-stream' }
+              })
+              const signature = Buffer.from(sigResp.data).toString('utf-8').trim()
+
+              // Constrói o URL final com a tag (os browser_download_url de rascunho dão 404)
+              const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${tag}/${archiveName}`
 
               // No Tauri v2 os artefactos de updater são os próprios instaladores
               if (archiveName.endsWith('-setup.exe')) {
