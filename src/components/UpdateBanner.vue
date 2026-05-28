@@ -32,8 +32,10 @@ async function checkUpdate() {
     } else {
       state.value = 'idle'
     }
-  } catch {
-    state.value = 'idle' // falha silenciosa — não incomoda o utilizador
+  } catch (e) {
+    // Mostra o erro para diagnóstico
+    errorMsg.value = String(e)
+    state.value = 'error'
   }
 }
 
