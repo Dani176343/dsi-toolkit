@@ -230,6 +230,27 @@ pub async fn run_install_jars(
     let stderr_lines = stderr_handle.await.unwrap_or_default();
 
     if status.success() {
+        // Garante que todos os JARs presentes têm timestamp actualizado —
+        // mesmo os que o parser não detectou no output (formatos diferentes, etc.)
+        if let Ok(entries) = std::fs::read_dir(&jars_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|x| x.to_str()) == Some("jar") {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        let ts_file = ts_dir.join(name);
+                        // Só toca se o timestamp for mais antigo que o ficheiro
+                        // (i.e., estava desactualizado antes do install)
+                        let jar_mtime = file_mtime_secs(&path).unwrap_or(0);
+                        let ts_mtime  = file_mtime_secs(&ts_file).unwrap_or(0);
+                        if jar_mtime > ts_mtime {
+                            let _ = std::fs::write(&ts_file, "");
+                            installed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
         app.emit(
             "install-done",
             InstallDoneEvent {
