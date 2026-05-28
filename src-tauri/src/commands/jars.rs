@@ -47,13 +47,21 @@ fn file_mtime_secs(path: &Path) -> Option<u64> {
 }
 
 /// Lê o mtime do JAR que estava guardado no ficheiro de timestamp.
-/// O ficheiro contém o mtime do JAR no momento da instalação como string numérica.
+/// Novo formato: conteúdo do ficheiro é o mtime do JAR como string numérica.
+/// Formato antigo (migração): ficheiro vazio → usa o mtime do próprio ficheiro.
 fn read_stored_mtime(ts_file: &Path) -> Option<u64> {
-    std::fs::read_to_string(ts_file)
-        .ok()?
-        .trim()
-        .parse::<u64>()
+    if !ts_file.exists() {
+        return None;
+    }
+    // Novo formato: conteúdo numérico
+    if let Some(mtime) = std::fs::read_to_string(ts_file)
         .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        return Some(mtime);
+    }
+    // Formato antigo (ficheiro vazio): usa mtime do ficheiro de timestamp como fallback
+    file_mtime_secs(ts_file)
 }
 
 /// Guarda o mtime actual do JAR no ficheiro de timestamp.
@@ -192,6 +200,7 @@ pub async fn run_install_jars(
     let stdout = child.stdout.take().unwrap();
     let mut lines = BufReader::new(stdout).lines();
     let mut installed = 0;
+    let mut counted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let stderr = child.stderr.take().unwrap();
     let stderr_handle = tokio::spawn(async move {
@@ -206,6 +215,7 @@ pub async fn run_install_jars(
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(jar_name) = parse_jar_name(&line) {
             installed += 1;
+            counted.insert(jar_name.clone());
             let jar_path = Path::new(&jars_dir).join(&jar_name);
             write_jar_timestamp(&ts_dir.join(&jar_name), &jar_path);
             app.emit(
@@ -240,7 +250,10 @@ pub async fn run_install_jars(
                     let stored   = read_stored_mtime(&ts_file).unwrap_or(0);
                     if jar_mtime != stored {
                         write_jar_timestamp(&ts_file, &path);
-                        installed += 1;
+                        // Só conta se não foi já detectado durante o streaming
+                        if !counted.contains(name) {
+                            installed += 1;
+                        }
                     }
                 }
             }

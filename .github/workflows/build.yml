@@ -135,9 +135,11 @@ jobs:
               const signature = (await resp.text()).trim()
               const url = archive.browser_download_url
 
-              // Mapeia para a plataforma correcta
-              if (archiveName.includes('nsis.zip') || archiveName.includes('_x64-setup.nsis.zip')) {
-                platforms['windows-x86_64'] = { signature, url }
+              // Mapeia para as chaves exactas que o Tauri v2 updater espera
+              if (archiveName.includes('nsis.zip')) {
+                platforms['windows-x86_64-nsis'] = { signature, url }
+              } else if (archiveName.includes('msi.zip')) {
+                platforms['windows-x86_64-msi'] = { signature, url }
               } else if (archiveName.includes('AppImage.tar.gz')) {
                 platforms['linux-x86_64'] = { signature, url }
               } else if (archiveName.includes('aarch64') && archiveName.endsWith('.tar.gz')) {
