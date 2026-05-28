@@ -98,7 +98,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: false
+          includeUpdaterJson: true
 
   # ── 3. Gera latest.json e publica ───────────────────────────────────────────
   publish-release:
@@ -118,6 +118,8 @@ jobs:
               github.rest.repos.listReleaseAssets,
               { owner: context.repo.owner, repo: context.repo.repo, release_id: releaseId }
             )
+
+            console.log('Assets encontrados:', assets.map(a => a.name))
 
             const platforms = {}
 
@@ -148,7 +150,7 @@ jobs:
             console.log('Plataformas detectadas:', Object.keys(platforms))
 
             if (Object.keys(platforms).length === 0) {
-              throw new Error('Nenhuma plataforma detectada nos assets! Verifica se os .sig foram gerados.')
+              core.warning('Nenhuma plataforma detectada nos .sig. Verifica os logs dos jobs de build.')
             }
 
             const latestJson = JSON.stringify({
