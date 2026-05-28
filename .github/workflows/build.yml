@@ -22,18 +22,30 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const tag = context.ref.replace('refs/tags/', '')
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref.replace('refs/tags/', ''),
-              name: `DSI Toolkit ${context.ref.replace('refs/tags/', '')}`,
-              body: `## O que há de novo\nVê os commits para detalhes.\n\n## Instalação / Atualização\n- **Windows**: \`DSI Toolkit_*_x64-setup.exe\`\n- **Linux (Debian/Ubuntu)**: \`dsi-toolkit_*_amd64.deb\`\n- **Linux (outros)**: \`dsi-toolkit_*_amd64.AppImage\`\n- **macOS**: \`DSI Toolkit_*_aarch64.dmg\`\n\n> Se já tens a app instalada, ela vai actualizar automaticamente.`,
+              tag_name: tag,
+              name: `DSI Toolkit ${tag}`,
+              body: [
+                '## O que há de novo',
+                'Vê os commits para detalhes.',
+                '',
+                '## Instalação / Atualização',
+                '- **Windows**: `DSI Toolkit_*_x64-setup.exe`',
+                '- **Linux (Debian/Ubuntu)**: `dsi-toolkit_*_amd64.deb`',
+                '- **Linux (outros)**: `dsi-toolkit_*_amd64.AppImage`',
+                '- **macOS**: `DSI Toolkit_*_aarch64.dmg`',
+                '',
+                '> Se já tens a app instalada, ela vai actualizar automaticamente.',
+              ].join('\n'),
               draft: true,
               prerelease: false
             })
             return data.id
 
-  # ── 2. Build por plataforma ──────────────────────────────────────────────────
+  # ── 2. Build por plataforma (em paralelo) ───────────────────────────────────
   build:
     needs: create-release
     strategy:
@@ -86,30 +98,82 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: false   # gerado no passo final
+          includeUpdaterJson: false
 
-  # ── 3. Publica a release e gera latest.json ──────────────────────────────────
+  # ── 3. Gera latest.json e publica ───────────────────────────────────────────
   publish-release:
     needs: [create-release, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Publicar release e gerar latest.json
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: true
-
-      - name: Publicar release (tirar de rascunho)
+      - name: Gerar latest.json e publicar release
         uses: actions/github-script@v7
         with:
           script: |
+            const releaseId = Number(${{ needs.create-release.outputs.release_id }})
+            const tag = context.ref.replace('refs/tags/', '')
+            const version = tag.replace('v', '')
+
+            // Vai buscar todos os assets do release
+            const assets = await github.paginate(
+              github.rest.repos.listReleaseAssets,
+              { owner: context.repo.owner, repo: context.repo.repo, release_id: releaseId }
+            )
+
+            const platforms = {}
+
+            for (const asset of assets) {
+              if (!asset.name.endsWith('.sig')) continue
+
+              const archiveName = asset.name.replace('.sig', '')
+              const archive = assets.find(a => a.name === archiveName)
+              if (!archive) continue
+
+              // Descarrega a assinatura
+              const resp = await fetch(asset.browser_download_url)
+              const signature = (await resp.text()).trim()
+              const url = archive.browser_download_url
+
+              // Mapeia para a plataforma correcta
+              if (archiveName.includes('nsis.zip') || archiveName.includes('_x64-setup.nsis.zip')) {
+                platforms['windows-x86_64'] = { signature, url }
+              } else if (archiveName.includes('AppImage.tar.gz')) {
+                platforms['linux-x86_64'] = { signature, url }
+              } else if (archiveName.includes('aarch64') && archiveName.endsWith('.tar.gz')) {
+                platforms['darwin-aarch64'] = { signature, url }
+              } else if (archiveName.includes('x86_64') && archiveName.endsWith('.tar.gz')) {
+                platforms['darwin-x86_64'] = { signature, url }
+              }
+            }
+
+            console.log('Plataformas detectadas:', Object.keys(platforms))
+
+            if (Object.keys(platforms).length === 0) {
+              throw new Error('Nenhuma plataforma detectada nos assets! Verifica se os .sig foram gerados.')
+            }
+
+            const latestJson = JSON.stringify({
+              version,
+              notes: 'Nova versão disponível',
+              pub_date: new Date().toISOString(),
+              platforms
+            }, null, 2)
+
+            // Upload latest.json
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              name: 'latest.json',
+              data: latestJson,
+              headers: { 'content-type': 'application/json' }
+            })
+
+            // Publica o release (tira de rascunho)
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
+              release_id: releaseId,
               draft: false
             })
+
+            console.log(`Release ${tag} publicada com sucesso!`)
