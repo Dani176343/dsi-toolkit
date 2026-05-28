@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "dsi-toolkit"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "dirs 5.0.1",
  "git2",
